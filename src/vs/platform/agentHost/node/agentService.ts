@@ -112,6 +112,7 @@ import { AgentHostCommitOperationContribution } from './agentHostCommitOperation
 import { AgentHostDiscardChangesOperationContribution } from './agentHostDiscardChangesOperationProvider.js';
 import { AgentHostMergeOperationContribution } from './agentHostMergeOperationProvider.js';
 import { AgentHostPullRequestOperationContribution } from './agentHostPullRequestOperationProvider.js';
+import { AgentHostRollbackTurnOperationContribution } from './agentHostRollbackTurnOperationProvider.js';
 import { AgentHostSyncOperationContribution } from './agentHostSyncOperationProvider.js';
 import { AgentHostReviewService } from './agentHostReviewService.js';
 import { AgentHostCheckpointService } from './agentHostCheckpointService.js';
@@ -753,6 +754,7 @@ export class AgentService extends Disposable implements IAgentService {
 		this._register(this._changesetOperationService.registerContribution(instantiationService.createInstance(AgentHostMergeOperationContribution)));
 		this._register(this._changesetOperationService.registerContribution(instantiationService.createInstance(AgentHostSyncOperationContribution)));
 		this._register(this._changesetOperationService.registerContribution(instantiationService.createInstance(AgentHostDiscardChangesOperationContribution)));
+		this._register(this._changesetOperationService.registerContribution(instantiationService.createInstance(AgentHostRollbackTurnOperationContribution)));
 
 		this._completions = this._register(instantiationService.createInstance(AgentHostCompletions));
 		// Built-in generic provider: completes files in the session's workspace folder.
