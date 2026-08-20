@@ -22,6 +22,7 @@ import { IWorkspaceEditingService } from '../../../../../workbench/services/work
 import { ISessionFolder, ISessionWorkspace } from '../../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
+import { ISearchScopeService, SearchScopeService } from '../../../../../workbench/contrib/search/common/searchScope.js';
 import { WorkspaceFolderManagementContribution } from '../../browser/workspaceFolderManagement.js';
 
 /**
@@ -57,6 +58,8 @@ interface ITestHarness {
 	readonly mounted: () => readonly string[];
 	readonly labels: () => readonly string[];
 	readonly trusted: () => readonly string[];
+	/** The folders search would cover, given everything currently mounted. */
+	readonly searchScope: () => readonly string[];
 	readonly setVisible: (sessions: readonly (IActiveSession | undefined)[]) => void;
 	readonly setActive: (session: IActiveSession | undefined) => void;
 	readonly settle: () => Promise<void>;
@@ -120,12 +123,16 @@ suite('Sessions - Workspace Folder Management', () => {
 
 		instantiationService.stub(IConfigurationService, new TestConfigurationService(options?.configuration));
 
+		const searchScope = new SearchScopeService();
+		instantiationService.stub(ISearchScopeService, searchScope);
+
 		store.add(instantiationService.createInstance(WorkspaceFolderManagementContribution));
 
 		return {
 			mounted: () => folders.map(f => f.uri.path),
 			labels: () => folders.map(f => f.name),
 			trusted: () => trusted.map(uri => uri.path),
+			searchScope: () => searchScope.resolveSearchFolders(folders).map(f => f.uri.path),
 			setVisible: sessions => visibleSessions.set(sessions, undefined),
 			setActive: session => activeSession.set(session, undefined),
 			// Reconciliation is queued and awaits only already-resolved
@@ -220,6 +227,64 @@ suite('Sessions - Workspace Folder Management', () => {
 		await harness.settle();
 
 		assert.deepStrictEqual(harness.mounted(), ['/repos/app', '/worktrees/app-fix']);
+	});
+
+	test('points search at the active branch, so matches are not reported once per branch', async () => {
+		const harness = createHarness();
+		const main = sessionWith([folder('/repos/app', '/repos/app', 'app (main)')]);
+		const feature = sessionWith([folder('/repos/app', '/worktrees/app-feature', 'app (feature)')]);
+
+		harness.setVisible([main, feature]);
+		harness.setActive(feature);
+		await harness.settle();
+
+		assert.deepStrictEqual({
+			mounted: harness.mounted(),
+			searched: harness.searchScope(),
+		}, {
+			mounted: ['/repos/app', '/worktrees/app-feature'],
+			searched: ['/worktrees/app-feature'],
+		});
+	});
+
+	test('follows the user to the branch they switch to', async () => {
+		const harness = createHarness();
+		const main = sessionWith([folder('/repos/app', '/repos/app', 'app (main)')]);
+		const feature = sessionWith([folder('/repos/app', '/worktrees/app-feature', 'app (feature)')]);
+
+		harness.setVisible([main, feature]);
+		harness.setActive(feature);
+		await harness.settle();
+
+		harness.setActive(main);
+		await harness.settle();
+
+		assert.deepStrictEqual(harness.searchScope(), ['/repos/app']);
+	});
+
+	test('searches everything mounted when no session is active', async () => {
+		const harness = createHarness();
+		harness.setVisible([
+			sessionWith([folder('/repos/app', '/repos/app', 'app (main)')]),
+			sessionWith([folder('/repos/app', '/worktrees/app-feature', 'app (feature)')]),
+		]);
+		await harness.settle();
+
+		assert.deepStrictEqual(harness.searchScope(), ['/repos/app', '/worktrees/app-feature']);
+	});
+
+	test('searches a multi-folder session in full', async () => {
+		const harness = createHarness();
+		const monorepo = sessionWith([
+			folder('/repos/app', '/worktrees/app-feature', 'app (feature)'),
+			folder('/repos/api', '/worktrees/api-feature', 'api (feature)'),
+		]);
+
+		harness.setVisible([monorepo, sessionWith([folder('/repos/app', '/repos/app', 'app (main)')])]);
+		harness.setActive(monorepo);
+		await harness.settle();
+
+		assert.deepStrictEqual(harness.searchScope(), ['/worktrees/app-feature', '/worktrees/api-feature']);
 	});
 
 	test('trusts the checkouts it mounts for a session that demands trust', async () => {

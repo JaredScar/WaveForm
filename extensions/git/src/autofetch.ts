@@ -8,6 +8,43 @@ import { Repository } from './repository';
 import { eventToPromise, filterEvent, onceEvent } from './util';
 import { GitErrorCodes } from './api/git.constants';
 
+/**
+ * Keeps checkouts that share one object store from each fetching the same
+ * commits.
+ *
+ * Worktrees of a repository share a git common directory, so `refs/remotes` is
+ * shared too: a fetch in any one of them updates the remote-tracking refs every
+ * sibling reads, and each sibling's `DotGitWatcher` is watching those shared
+ * refs, so it refreshes its own ahead/behind without having fetched. A window
+ * holding N worktrees of one repository would otherwise run N identical
+ * fetches per period — a real cost, since the Agents window defaults
+ * `git.autofetch` on.
+ *
+ * Clones do not share an object store, so they get distinct keys and continue
+ * to fetch independently, which they must.
+ */
+export class SharedFetchCoordinator {
+
+	private readonly lastFetchByKey = new Map<string, number>();
+
+	/**
+	 * Whether the caller should fetch now, recording the claim when it should.
+	 * Returns `false` when a checkout sharing the same object store already
+	 * fetched within `periodMs`.
+	 */
+	tryClaim(key: string, periodMs: number, now: number = Date.now()): boolean {
+		const last = this.lastFetchByKey.get(key);
+		if (last !== undefined && now - last < periodMs) {
+			return false;
+		}
+		this.lastFetchByKey.set(key, now);
+		return true;
+	}
+}
+
+/** Process-wide coordinator; tests construct their own. */
+export const sharedFetchCoordinator = new SharedFetchCoordinator();
+
 export class AutoFetcher {
 
 	private static DidInformUser = 'autofetch.didInformUser';
@@ -22,7 +59,7 @@ export class AutoFetcher {
 
 	private disposables: Disposable[] = [];
 
-	constructor(private repository: Repository, private globalState: Memento) {
+	constructor(private repository: Repository, private globalState: Memento, private coordinator: SharedFetchCoordinator = sharedFetchCoordinator) {
 		workspace.onDidChangeConfiguration(this.onConfiguration, this, this.disposables);
 		this.onConfiguration();
 
@@ -104,6 +141,17 @@ export class AutoFetcher {
 		this.enabled = false;
 	}
 
+	/**
+	 * Identifies the object store this checkout fetches into. Worktrees of one
+	 * repository report their shared common directory here; a clone reports its
+	 * own. The fetch mode is part of the key because `all` and the default
+	 * fetch different things, so one cannot stand in for the other.
+	 */
+	private get objectStoreKey(): string {
+		const { commonPath, path } = this.repository.dotGit;
+		return `${commonPath ?? path}\u0000${this._fetchAll ? 'all' : 'default'}`;
+	}
+
 	private async run(): Promise<void> {
 		while (this.enabled) {
 			await this.repository.whenIdleAndFocused();
@@ -112,15 +160,21 @@ export class AutoFetcher {
 				return;
 			}
 
-			try {
-				if (this._fetchAll) {
-					await this.repository.fetchAll({ silent: true });
-				} else {
-					await this.repository.fetchDefault({ silent: true });
-				}
-			} catch (err) {
-				if (err.gitErrorCode === GitErrorCodes.AuthenticationFailed) {
-					this.disable();
+			const period = workspace.getConfiguration('git', Uri.file(this.repository.root)).get<number>('autofetchPeriod', 180) * 1000;
+
+			// Skip when a checkout sharing this object store already fetched
+			// these refs; the shared-ref watcher still reports the result.
+			if (this.coordinator.tryClaim(this.objectStoreKey, period)) {
+				try {
+					if (this._fetchAll) {
+						await this.repository.fetchAll({ silent: true });
+					} else {
+						await this.repository.fetchDefault({ silent: true });
+					}
+				} catch (err) {
+					if (err.gitErrorCode === GitErrorCodes.AuthenticationFailed) {
+						this.disable();
+					}
 				}
 			}
 
@@ -128,7 +182,6 @@ export class AutoFetcher {
 				return;
 			}
 
-			const period = workspace.getConfiguration('git', Uri.file(this.repository.root)).get<number>('autofetchPeriod', 180) * 1000;
 			const timeout = new Promise(c => setTimeout(c, period));
 			const whenDisabled = eventToPromise(filterEvent(this.onDidChange, enabled => !enabled));
 

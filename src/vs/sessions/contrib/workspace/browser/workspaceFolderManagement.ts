@@ -18,6 +18,7 @@ import { ISession, ISessionFolder } from '../../../services/sessions/common/sess
 import { IWorkspaceFolderLabelService } from '../../../../workbench/services/workspaces/common/workspaceFolderLabelService.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { basename } from '../../../../base/common/resources.js';
+import { ISearchScopeService } from '../../../../workbench/contrib/search/common/searchScope.js';
 
 /**
  * When enabled, every session visible in the grid contributes its folders to
@@ -86,6 +87,7 @@ export class WorkspaceFolderManagementContribution extends Disposable implements
 		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 		@IWorkspaceFolderLabelService private readonly workspaceFolderLabelService: IWorkspaceFolderLabelService,
 		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@ISearchScopeService private readonly searchScopeService: ISearchScopeService,
 	) {
 		super();
 
@@ -110,6 +112,17 @@ export class WorkspaceFolderManagementContribution extends Disposable implements
 
 			const plan = this._computeDesiredFolders(activeSession, visibleSessions);
 			this.queue.queue(() => this._reconcile(plan));
+		}));
+
+		// Mounting every visible session's folders means a workspace-wide
+		// search covers several checkouts of one repository at once, which
+		// would report each match once per branch. Point search at the
+		// checkout the user is actually looking at; it offers a way back to
+		// searching all of them.
+		this._register(autorun(reader => {
+			const activeSession = this.sessionsService.activeSession.read(reader);
+			const workspace = activeSession?.workspace.read(reader);
+			this.searchScopeService.setScopedFolders(workspace?.folders.map(folder => folder.workingDirectory));
 		}));
 	}
 

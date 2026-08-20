@@ -11,7 +11,8 @@ import { IFileQueryBuilderOptions, QueryBuilder } from '../../../services/search
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { getOutOfWorkspaceEditorResources, extractRangeFromFilter, IWorkbenchSearchConfiguration } from '../common/search.js';
 import { ISearchService, ISearchComplete } from '../../../services/search/common/search.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
+import { ISearchScopeService } from '../common/searchScope.js';
 import { untildify } from '../../../../base/common/labels.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -124,6 +125,7 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 		@IInstantiationService private readonly instantiationService: IInstantiationService,
 		@ISearchService private readonly searchService: ISearchService,
 		@IWorkspaceContextService private readonly contextService: IWorkspaceContextService,
+		@ISearchScopeService private readonly searchScopeService: ISearchScopeService,
 		@IPathService private readonly pathService: IPathService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
 		@IFileService private readonly fileService: IFileService,
@@ -555,9 +557,18 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 
 	private readonly fileQueryBuilder: QueryBuilder;
 
+	/**
+	 * The folders to list files from. In a window that mounts several checkouts
+	 * of one repository, listing them all would offer every file once per
+	 * branch, so the window narrows this to the checkout in focus.
+	 */
+	private get searchFolders(): IWorkspaceFolder[] {
+		return [...this.searchScopeService.resolveSearchFolders(this.contextService.getWorkspace().folders)];
+	}
+
 	private createFileQueryCache(): FileQueryCacheState {
 		return new FileQueryCacheState(
-			cacheKey => this.fileQueryBuilder.file(this.contextService.getWorkspace().folders, this.getFileQueryOptions({ cacheKey })),
+			cacheKey => this.fileQueryBuilder.file(this.searchFolders, this.getFileQueryOptions({ cacheKey })),
 			query => this.searchService.fileSearch(query),
 			cacheKey => this.searchService.clearCache(cacheKey),
 			this.pickState.fileQueryCache
@@ -706,7 +717,7 @@ export class AnythingQuickAccessProvider extends PickerQuickAccessProvider<IAnyt
 		const start = Date.now();
 		return this.searchService.fileSearch(
 			this.fileQueryBuilder.file(
-				this.contextService.getWorkspace().folders,
+				this.searchFolders,
 				this.getFileQueryOptions({
 					filePattern,
 					cacheKey: this.pickState.fileQueryCache?.cacheKey,

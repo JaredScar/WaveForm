@@ -39,8 +39,10 @@ import { Extensions, IConfigurationMigrationRegistry } from '../../../common/con
 import { registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { AccessibleViewRegistry } from '../../../../platform/accessibility/browser/accessibleViewRegistry.js';
 import { SearchAccessibilityHelp } from './searchAccessibilityHelp.js';
+import { ISearchScopeService, SearchScopeService } from '../common/searchScope.js';
 
 registerSingleton(ISearchViewModelWorkbenchService, SearchViewModelWorkbenchService, InstantiationType.Delayed);
+registerSingleton(ISearchScopeService, SearchScopeService, InstantiationType.Delayed);
 
 searchWidgetContributions();
 

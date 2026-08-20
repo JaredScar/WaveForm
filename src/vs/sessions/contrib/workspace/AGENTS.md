@@ -18,6 +18,7 @@ work in parallel without taking turns on a single checkout.
 - [Labels](#labels)
 - [Settings](#settings)
 - [Folder-Index Assumptions](#folder-index-assumptions)
+- [Cost of a Mounted Folder](#cost-of-a-mounted-folder)
 - [Known Gaps](#known-gaps)
 
 ## Why
@@ -170,13 +171,69 @@ tracks the active session's checkout and takes priority over the picker.
 Treat both as the pattern for future work. A new consumer that reaches for
 `folders[0]` in this window is almost certainly a bug.
 
+## Cost of a Mounted Folder
+
+Mounting is not free, and the cost is not uniform across subsystems. Measured
+against the code paths that react to a workspace folder being added:
+
+| Subsystem | Cost per mounted folder | Notes |
+|---|---|---|
+| Source control | A full `Repository`: recursive watcher, `.git` watcher, initial `git status` + `getRefs`, and autofetch | The dominant eager cost |
+| File watching | One recursive watcher tree | Separate from the git extension's own |
+| Search and Quick Open | One ripgrep run per searched folder, per query | Narrowed to the active branch — see below |
+| Language services | None until a file in that folder is opened | Not an eager cost |
+
+Two of these are worth knowing precisely, because the obvious guesses are wrong
+in both directions:
+
+- **Language services are lazier than they look.** Adding a folder does not
+  create a TypeScript project; the extension activates on the first supported
+  document and creates a project root only for folders whose files are actually
+  opened. N mounted branches do not cost N TypeScript projects until you open
+  files in each of them.
+- **Autofetch is more eager than it looks.** `git.autofetch` defaults to `true`
+  in the Agents window (`extensions/git/package.json`, via `agentsWindow`) and
+  is resource-scoped, so every mounted checkout would otherwise run its own
+  `git fetch` every `git.autofetchPeriod` seconds — 180 by default.
+
+### Search is scoped to the active branch
+
+Sibling checkouts are not nested inside one another, so nothing dedupes them. A
+workspace-wide search across N checkouts of one repository would return every
+match N times, once per branch, and Quick Open would list every file N times.
+That is a correctness problem before it is a cost problem.
+
+`ISearchScopeService` (`src/vs/workbench/contrib/search/common/searchScope.ts`)
+narrows both surfaces to the folders of the session in focus. It follows the
+same shape as the terminal's default cwd: the service is declared in the
+workbench layer with an unset default, so ordinary windows behave exactly as
+upstream, and `WorkspaceFolderManagementContribution` pushes the active
+session's folders into it.
+
+A scope that matches no mounted folder is treated as stale and ignored rather
+than as a reason to search nothing. Search reports the narrowing in its results
+header and offers a "search all branches" link, which the search view remembers
+alongside its other query toggles. Quick Open is always scoped.
+
+### Autofetch is shared across one object store
+
+`SharedFetchCoordinator` (`extensions/git/src/autofetch.ts`) lets only one
+checkout per object store fetch in a given period. Worktrees of a repository
+share a git common directory, so they share `refs/remotes` too: one fetch
+updates the refs all of them read, and each sibling's `DotGitWatcher` is already
+watching those shared refs, so it refreshes its own ahead/behind without having
+fetched. Clones own their objects, get distinct keys, and keep fetching
+independently — they have to. The fetch mode is part of the key, so a default
+fetch never stands in for `git.autofetch: all`.
+
 ## Known Gaps
 
+- File watching still costs one recursive tree per mounted folder, twice over:
+  once for `WorkspaceWatcher` and once for the git extension's own per-repository
+  watcher. Those trees are genuinely distinct, so the folder cap is the only
+  bound on them.
 - Clone creation copies the whole repository and is slow on large repos. It
   uses `git clone --local`, so objects are hardlinked where the filesystem
   allows, but the checkout is still a full write.
 - A clone's commits are invisible to the parent repository until pushed or
   fetched. There is no UI yet for moving work from a clone back to the parent.
-- Nothing deduplicates language-server or extension work across mounted
-  checkouts of the same repository, so N branches cost roughly N times the
-  background work. The folder cap is the only mitigation.

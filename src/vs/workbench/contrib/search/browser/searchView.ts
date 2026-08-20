@@ -66,6 +66,7 @@ import * as Constants from '../common/constants.js';
 import { IReplaceService } from './replace.js';
 import { getOutOfWorkspaceEditorResources, SearchStateKey, SearchUIState } from '../common/search.js';
 import { ISearchHistoryService, ISearchHistoryValues, SearchHistoryService } from '../common/searchHistoryService.js';
+import { ISearchScopeService } from '../common/searchScope.js';
 import { createEditorFromSearchResult } from '../../searchEditor/browser/searchEditorActions.js';
 import { ACTIVE_GROUP, IEditorService, SIDE_GROUP } from '../../../services/editor/common/editorService.js';
 import { IPreferencesService, ISettingsEditorOptions } from '../../../services/preferences/common/preferences.js';
@@ -104,6 +105,7 @@ interface ISearchViewStateQuery {
 	folderExclusions?: string;
 	folderIncludes?: string;
 	onlyOpenEditors?: boolean;
+	searchAllBranches?: boolean;
 	queryDetailsExpanded?: string | boolean;
 	useExcludesAndIgnoreFiles?: boolean;
 	preserveCase?: boolean;
@@ -181,6 +183,14 @@ export class SearchView extends ViewPane {
 
 	private searchWithoutFolderMessageElement: HTMLElement | undefined;
 
+	/**
+	 * Whether the user opted out of {@link ISearchScopeService}'s narrowing for
+	 * this view. Persisted alongside the other query toggles.
+	 */
+	private searchAllBranches = false;
+	/** Folders the last query was narrowed to, or `undefined` if it was not narrowed. */
+	private scopedFolderLabel: string | undefined;
+
 	private currentSearchQ = Promise.resolve();
 	private addToSearchHistoryDelayer: Delayer<void>;
 
@@ -221,6 +231,7 @@ export class SearchView extends ViewPane {
 		@IViewDescriptorService viewDescriptorService: IViewDescriptorService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IWorkspaceContextService private readonly contextService: IWorkspaceContextService,
+		@ISearchScopeService private readonly searchScopeService: ISearchScopeService,
 		@ISearchViewModelWorkbenchService private readonly searchViewModelWorkbenchService: ISearchViewModelWorkbenchService,
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IReplaceService private readonly replaceService: IReplaceService,
@@ -496,6 +507,7 @@ export class SearchView extends ViewPane {
 		const patternIncludes = this.viewletState.query?.folderIncludes || '';
 		const patternIncludesHistory: string[] = history.include || [];
 		const onlyOpenEditors = this.viewletState.query?.onlyOpenEditors || false;
+		this.searchAllBranches = this.viewletState.query?.searchAllBranches || false;
 
 		const queryDetailsExpanded = this.viewletState.query?.queryDetailsExpanded || '';
 		const useExcludesAndIgnoreFiles = typeof this.viewletState.query?.useExcludesAndIgnoreFiles === 'boolean' ?
@@ -1682,7 +1694,14 @@ export class SearchView extends ViewPane {
 			isSmartCase: this.searchConfig.smartCase,
 			expandPatterns: true
 		};
-		const folderResources = this.contextService.getWorkspace().folders;
+		const allFolders = this.contextService.getWorkspace().folders;
+		const folderResources = this.searchAllBranches ? allFolders : this.searchScopeService.resolveSearchFolders(allFolders);
+		// Remember what this query covered, so the results header can say so
+		// and offer the way out. Comparing against the full set means a window
+		// with nothing to narrow never mentions branches at all.
+		this.scopedFolderLabel = folderResources.length < allFolders.length
+			? folderResources.map(folder => folder.name).join(', ')
+			: undefined;
 
 		const onQueryValidationError = (err: Error) => {
 			this.searchWidget.searchInput?.showMessage({ content: err.message, type: MessageType.ERROR });
@@ -2054,6 +2073,11 @@ export class SearchView extends ViewPane {
 		this.inputPatternIncludes.setOnlySearchInOpenEditors(false);
 	}
 
+	private onSearchAllBranches(): void {
+		this.searchAllBranches = true;
+		this.triggerQueryChange({ preserveFocus: false });
+	}
+
 	private updateSearchResultCount(disregardExcludesAndIgnores?: boolean, onlyOpenEditors?: boolean, clear: boolean = false): void {
 		if (this._cachedKeywords.length > 0) {
 			return;
@@ -2080,6 +2104,15 @@ export class SearchView extends ViewPane {
 				const searchingInOpenMessage = ' - ' + nls.localize('onlyOpenEditors', "searching only in open files") + ' ';
 				const disableOpenEditorsButton = this.messageDisposables.add(new SearchLinkButton(nls.localize('openEditors.disable', "disable"), this.onDisableSearchInOpenEditors.bind(this), this.hoverService, nls.localize('disableOpenEditors', "Search in entire workspace")));
 				dom.append(messageEl, $('span', undefined, searchingInOpenMessage, '(', disableOpenEditorsButton.element, ')'));
+			}
+
+			if (this.scopedFolderLabel) {
+				const scopedMessage = ' - ' + nls.localize('onlyScopedFolders', "searching only in {0}", this.scopedFolderLabel) + ' ';
+				const searchAllBranchesButton = this.messageDisposables.add(new SearchLinkButton(
+					nls.localize('scopedFolders.searchAll', "search all branches"),
+					this.onSearchAllBranches.bind(this), this.hoverService,
+					nls.localize('scopedFolders.searchAllTooltip', "Search every branch mounted in this window")));
+				dom.append(messageEl, $('span', undefined, scopedMessage, '(', searchAllBranchesButton.element, ')'));
 			}
 
 			dom.append(messageEl, ' - ');
@@ -2425,6 +2458,7 @@ export class SearchView extends ViewPane {
 		this.viewletState.query.useExcludesAndIgnoreFiles = useExcludesAndIgnoreFiles;
 		this.viewletState.query.preserveCase = preserveCase;
 		this.viewletState.query.onlyOpenEditors = onlyOpenEditors;
+		this.viewletState.query.searchAllBranches = this.searchAllBranches;
 
 		const isReplaceShown = this.searchAndReplaceWidget.isReplaceShown();
 
