@@ -21,6 +21,7 @@ import { IPullRequestIconCache, PullRequestIconCache } from './pullRequestIconCa
 import './pullRequestActions.js';
 import './createSessionFromPullRequestAction.js';
 import './issueActions.js';
+import './promoteBranchActions.js';
 
 const TRACE_PREFIX = '[PR-ICON-TRACE]';
 
