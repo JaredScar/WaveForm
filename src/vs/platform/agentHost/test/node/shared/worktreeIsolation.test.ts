@@ -18,7 +18,7 @@ import { SessionConfigKey } from '../../../common/sessionConfigKeys.js';
 import { AH_META_IS_ARCHIVED_DB_KEY, AH_META_IS_DONE_DB_KEY, MessageKind, ResponsePartKind, TurnState, type Turn } from '../../../common/state/sessionState.js';
 import { AgentBranchNameGenerator, IAgentBranchNameGenerator } from '../../../node/shared/agentBranchNameGenerator.js';
 import { ICopilotApiService } from '../../../node/shared/copilotApiService.js';
-import { buildWorktreeFailureNotification, normalizeWorktreeFailureDiagnostic, SessionWorkingDirectoryMissingError, WorktreeIsolation, getWorktreeName, getWorktreesRoot } from '../../../node/shared/worktreeIsolation.js';
+import { buildWorktreeFailureNotification, normalizeWorktreeFailureDiagnostic, SessionWorkingDirectoryMissingError, WorktreeIsolation, getClonesRoot, getWorktreeName, getWorktreesRoot } from '../../../node/shared/worktreeIsolation.js';
 import { TestSessionDatabase, createNoopGitService, createSessionDataService } from '../../common/sessionTestHelpers.js';
 
 /**
@@ -48,6 +48,8 @@ suite('WorktreeIsolation', () => {
 	let addWorktreeCalls: { worktree: URI; branchName: string; startPoint: string; track: boolean }[];
 	let addExistingCalls: { worktree: URI; branchName: string }[];
 	let removeCalls: { worktree: URI; force: boolean }[];
+	let addCloneCalls: { clone: URI; branchName: string; startPoint: string }[];
+	let removeCloneCalls: { clone: URI }[];
 	let copyIncludeCalls: { repositoryRoot: URI; worktree: URI; globs: readonly string[] }[];
 	let copyIncludeError: Error | undefined;
 	let branchName: string;
@@ -89,6 +91,14 @@ suite('WorktreeIsolation', () => {
 				removeCalls.push({ worktree, force: options?.force === true });
 				rmSync(worktree.fsPath, { recursive: true, force: true });
 			},
+			addClone: async (_root, clone, branch, startPoint) => {
+				addCloneCalls.push({ clone, branchName: branch, startPoint });
+				mkdirSync(clone.fsPath, { recursive: true });
+			},
+			removeClone: async clone => {
+				removeCloneCalls.push({ clone });
+				rmSync(clone.fsPath, { recursive: true, force: true });
+			},
 		};
 	}
 
@@ -112,6 +122,8 @@ suite('WorktreeIsolation', () => {
 		addWorktreeCalls = [];
 		addExistingCalls = [];
 		removeCalls = [];
+		addCloneCalls = [];
+		removeCloneCalls = [];
 		copyIncludeCalls = [];
 		copyIncludeError = undefined;
 		branchName = 'agents/my-feature';
@@ -159,7 +171,7 @@ suite('WorktreeIsolation', () => {
 			noCommits: { enum: noCommits.isolationProperty.protocol.enum, value: noCommits.isolationValue, branch: noCommits.branchProperty, prefix: noCommits.worktreeBranchPrefixProperty, includeFiles: noCommits.worktreeIncludeFilesProperty, branchTrack: noCommits.worktreeBranchTrackProperty },
 		}, {
 			noRepo: { enum: ['folder'], value: 'folder', branch: undefined, prefix: undefined, includeFiles: undefined, branchTrack: undefined },
-			repoWorktree: { enum: ['folder', 'worktree'], value: 'worktree', branchDefault: 'main', branchReadOnly: false, prefixReadOnly: true, includeFilesReadOnly: true, branchTrackReadOnly: true },
+			repoWorktree: { enum: ['folder', 'worktree', 'clone'], value: 'worktree', branchDefault: 'main', branchReadOnly: false, prefixReadOnly: true, includeFilesReadOnly: true, branchTrackReadOnly: true },
 			repoWorktreeSelected: { branchDefault: 'main', branchValue: 'feature', branchEnum: ['main'] },
 			repoFolder: { value: 'folder', branchDefault: 'feature', branchReadOnly: true, hasPrefix: true, hasIncludeFiles: true, hasBranchTrack: true },
 			noCommits: { enum: ['folder'], value: 'folder', branch: undefined, prefix: undefined, includeFiles: undefined, branchTrack: undefined },
@@ -237,6 +249,72 @@ suite('WorktreeIsolation', () => {
 			secondTakeAnnouncement: undefined,
 			idempotentReturn: expectedWorktree.toString(),
 			resolvedWorktree: expectedWorktree.toString(),
+		});
+	});
+
+	test('clone isolation clones into the clones root and records the kind', async () => {
+		const isolation = createIsolation(disposables);
+		const config = { [SessionConfigKey.Isolation]: 'clone', [SessionConfigKey.Branch]: 'main' };
+
+		const resolved = await isolation.resolveWorkingDirectory({ sessionUri, sessionId, workingDirectory: repoRoot, config, prompt: 'do a thing' });
+		const meta = await isolation.readWorktreeMetadata(sessionUri);
+
+		const expectedClone = URI.joinPath(getClonesRoot(repoRoot), getWorktreeName(branchName));
+		assert.deepStrictEqual({
+			resolved: resolved!.toString(),
+			addCloneArgs: addCloneCalls.map(c => ({ clone: c.clone.toString(), branchName: c.branchName, startPoint: c.startPoint })),
+			addWorktreeCallCount: addWorktreeCalls.length,
+			metaKind: meta?.kind,
+			metaPath: meta?.worktreePath?.toString(),
+			// The parent repository, not the clone, must stay recorded as the
+			// root so the session still groups under its repository.
+			metaRepo: meta?.repositoryRoot?.toString(),
+		}, {
+			resolved: expectedClone.toString(),
+			addCloneArgs: [{ clone: expectedClone.toString(), branchName, startPoint: 'main' }],
+			addWorktreeCallCount: 0,
+			metaKind: 'clone',
+			metaPath: expectedClone.toString(),
+			metaRepo: repoRoot.toString(),
+		});
+	});
+
+	test('deleting a clone-isolated session removes the clone rather than a worktree', async () => {
+		const isolation = createIsolation(disposables);
+		const config = { [SessionConfigKey.Isolation]: 'clone', [SessionConfigKey.Branch]: 'main' };
+		await isolation.resolveWorkingDirectory({ sessionUri, sessionId, workingDirectory: repoRoot, config, prompt: 'do a thing' });
+
+		const pending = await isolation.prepareSessionDeletion(sessionUri, sessionId);
+		await isolation.removeSessionWorktree(sessionId, pending);
+
+		const expectedClone = URI.joinPath(getClonesRoot(repoRoot), getWorktreeName(branchName));
+		assert.deepStrictEqual({
+			removeCloneArgs: removeCloneCalls.map(c => c.clone.toString()),
+			removeWorktreeCallCount: removeCalls.length,
+			cloneExists: existsSync(expectedClone.fsPath),
+		}, {
+			removeCloneArgs: [expectedClone.toString()],
+			removeWorktreeCallCount: 0,
+			cloneExists: false,
+		});
+	});
+
+	test('archiving leaves a clone on disk, because its commits exist nowhere else', async () => {
+		const isolation = createIsolation(disposables);
+		const config = { [SessionConfigKey.Isolation]: 'clone', [SessionConfigKey.Branch]: 'main' };
+		await isolation.resolveWorkingDirectory({ sessionUri, sessionId, workingDirectory: repoRoot, config, prompt: 'do a thing' });
+
+		await isolation.cleanupWorktreeOnArchive(sessionUri, sessionId);
+
+		const expectedClone = URI.joinPath(getClonesRoot(repoRoot), getWorktreeName(branchName));
+		assert.deepStrictEqual({
+			removeCloneCallCount: removeCloneCalls.length,
+			removeWorktreeCallCount: removeCalls.length,
+			cloneExists: existsSync(expectedClone.fsPath),
+		}, {
+			removeCloneCallCount: 0,
+			removeWorktreeCallCount: 0,
+			cloneExists: true,
 		});
 	});
 

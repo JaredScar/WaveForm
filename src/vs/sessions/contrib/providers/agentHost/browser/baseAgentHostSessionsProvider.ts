@@ -159,13 +159,21 @@ class ActiveClientSyncCancellationTokenSource extends CancellationTokenSource {
 }
 
 /**
- * {@link SessionConfigKey.Isolation} value that runs a session in its own git worktree.
+ * {@link SessionConfigKey.Isolation} values that run a session in a checkout of
+ * its own rather than directly in the opened folder — a linked git worktree, or
+ * a full local clone.
  */
-const WORKTREE_ISOLATION_VALUE = 'worktree';
+const ISOLATED_CHECKOUT_VALUES: ReadonlySet<unknown> = new Set(['worktree', 'clone']);
 
-/** Whether the given session config values select worktree isolation. */
+/**
+ * Whether the given session config values select an isolated checkout.
+ *
+ * Both worktree and clone isolation materialize a directory the session owns,
+ * which is what every caller here cares about; the two differ only in how that
+ * directory is produced, which is the agent host's concern.
+ */
 function isWorktreeIsolation(values: Record<string, unknown> | undefined): boolean {
-	return values?.[SessionConfigKey.Isolation] === WORKTREE_ISOLATION_VALUE;
+	return ISOLATED_CHECKOUT_VALUES.has(values?.[SessionConfigKey.Isolation]);
 }
 
 /** Maximum number of cached session summaries persisted per provider. */

@@ -70,7 +70,19 @@ const STORAGE_KEY_ISOLATION_MODE = 'sessions.isolationPicker.selectedMode';
 /** Remembers the cloud sandbox choice across new sessions, like the isolation picker above. */
 const STORAGE_KEY_USE_SANDBOX = 'sessions.cloudSandboxPicker.useSandbox';
 
-export type IsolationMode = 'worktree' | 'workspace';
+/**
+ * Where a new session's changes land.
+ *
+ * `workspace` works directly in the opened folder. `worktree` and `clone` both
+ * give the session a checkout of its own; they differ only in that a clone is a
+ * standalone repository, which lets two sessions hold the same branch at once.
+ */
+export type IsolationMode = 'worktree' | 'clone' | 'workspace';
+
+/** Whether the mode gives the session a checkout separate from the opened folder. */
+export function isIsolatedMode(mode: IsolationMode | undefined): mode is 'worktree' | 'clone' {
+	return mode === 'worktree' || mode === 'clone';
+}
 
 export interface ICopilotChatSession {
 	/** Globally unique session ID (`providerId:localId`). */
@@ -314,7 +326,7 @@ class CopilotCLISession extends Disposable implements ICopilotChatSession {
 		if (!this._repoUri) {
 			return true;
 		}
-		if (this._isolationMode === 'worktree' && !this._branch) {
+		if (isIsolatedMode(this._isolationMode) && !this._branch) {
 			return true;
 		}
 		return false;
@@ -348,7 +360,7 @@ class CopilotCLISession extends Disposable implements ICopilotChatSession {
 		this._workspaceData.set(sessionWorkspace, undefined);
 
 		const storedMode = storageService.get(STORAGE_KEY_ISOLATION_MODE, StorageScope.PROFILE);
-		const initialMode: IsolationMode = storedMode === 'workspace' ? 'workspace' : 'worktree';
+		const initialMode: IsolationMode = storedMode === 'workspace' || storedMode === 'clone' ? storedMode : 'worktree';
 		this._isolationMode = initialMode;
 		this._isolationModeObservable.set(initialMode, undefined);
 		this.setOption(ISOLATION_OPTION_ID, initialMode);
@@ -401,7 +413,7 @@ class CopilotCLISession extends Disposable implements ICopilotChatSession {
 
 			this._register(autorun(reader => {
 				const isolationMode = this.isolationMode.read(reader);
-				if (isolationMode === 'worktree') {
+				if (isIsolatedMode(isolationMode)) {
 					return;
 				}
 
@@ -522,10 +534,11 @@ class CopilotCLISession extends Disposable implements ICopilotChatSession {
 	}
 
 	getAgentHostSessionConfig(): Record<string, unknown> {
+		const isolated = isIsolatedMode(this._isolationMode);
 		const config: Record<string, unknown> = {
-			[SessionConfigKey.Isolation]: this._isolationMode === 'worktree' ? 'worktree' : 'folder',
+			[SessionConfigKey.Isolation]: isolated ? this._isolationMode : 'folder',
 		};
-		if (this._isolationMode === 'worktree' && this._branch) {
+		if (isolated && this._branch) {
 			config[SessionConfigKey.Branch] = this._branch;
 
 			// Forward the user's `git.branchPrefix` (resource-scoped to the
@@ -1799,7 +1812,7 @@ export class CopilotChatSessionsProvider extends Disposable implements ISessions
 	}
 
 	async setIsolationMode(sessionId: string, mode: string): Promise<void> {
-		if (mode !== 'worktree' && mode !== 'workspace') {
+		if (mode !== 'worktree' && mode !== 'clone' && mode !== 'workspace') {
 			return;
 		}
 		const newSession = this._newSessions.get(sessionId);

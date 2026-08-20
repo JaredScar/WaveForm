@@ -265,6 +265,8 @@ class TestAgentHostGitService implements IAgentHostGitService {
 	addedWorktrees: { repositoryRoot: URI; worktree: URI; branchName: string; startPoint: string }[] = [];
 	addedExistingWorktrees: { repositoryRoot: URI; worktree: URI; branchName: string }[] = [];
 	removedWorktrees: { repositoryRoot: URI; worktree: URI }[] = [];
+	addedClones: { repositoryRoot: URI; clone: URI; branchName: string }[] = [];
+	removedClones: { clone: URI }[] = [];
 	existingBranches = new Set<string>();
 	dirtyWorkingDirectories = new Set<string>();
 
@@ -285,6 +287,12 @@ class TestAgentHostGitService implements IAgentHostGitService {
 	}
 	async removeWorktree(repositoryRoot: URI, worktree: URI): Promise<void> {
 		this.removedWorktrees.push({ repositoryRoot, worktree });
+	}
+	async addClone(repositoryRoot: URI, clone: URI, branchName: string): Promise<void> {
+		this.addedClones.push({ repositoryRoot, clone, branchName });
+	}
+	async removeClone(clone: URI): Promise<void> {
+		this.removedClones.push({ clone });
 	}
 	async branchExists(_repositoryRoot: URI, branchName: string): Promise<boolean> {
 		return this.existingBranches.has(branchName);

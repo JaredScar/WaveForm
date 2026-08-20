@@ -179,6 +179,34 @@ export class AgentHostGitService implements IAgentHostGitService {
 		});
 	}
 
+	async addClone(repositoryRoot: URI, clone: URI, branchName: string, startPoint: string, onProgress?: (progress: IWorktreeFileProgress) => void): Promise<void> {
+		const progressParser = onProgress ? new GitCheckoutProgressParser(onProgress) : undefined;
+
+		// `--local` hardlinks the object store rather than copying it, and
+		// `--no-checkout` defers populating the working tree so the branch is
+		// created and checked out in one step below. `--shared` is deliberately
+		// avoided: it would leave the clone depending on the parent's objects,
+		// so pruning the parent could corrupt the clone.
+		await this._runGit(repositoryRoot, ['clone', '--local', '--no-checkout', repositoryRoot.fsPath, clone.fsPath], {
+			timeout: 300_000,
+			throwOnError: true,
+			...(progressParser ? { env: { GIT_PROGRESS_DELAY: '0' }, onStderr: chunk => progressParser.push(chunk) } : {}),
+		});
+
+		// The start point is resolved against the clone, where the parent's
+		// branches are present as `refs/remotes/origin/*` as well as the local
+		// branch copied by `git clone`.
+		await this._runGit(clone, ['-c', 'checkout.workers=0', 'checkout', '--no-track', '-b', branchName, startPoint], {
+			timeout: 180_000,
+			throwOnError: true,
+			...(progressParser ? { env: { GIT_PROGRESS_DELAY: '0' }, onStderr: chunk => progressParser.push(chunk) } : {}),
+		});
+	}
+
+	async removeClone(clone: URI): Promise<void> {
+		await fsPromises.rm(clone.fsPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+	}
+
 	async copyWorktreeIncludeFiles(repositoryRoot: URI, worktree: URI, globs: readonly string[], onProgress?: (progress: IWorktreeFileProgress) => void): Promise<void> {
 		try {
 			const worktreeIncludePaths = await this._getWorktreeIncludePaths(repositoryRoot, worktree, globs);

@@ -344,8 +344,9 @@ export class AgentHostSessionWorkingDirectorySynchronizer extends Disposable imp
 	 * Whether this session may follow the workspace. Requires a host that speaks
 	 * the working-directory actions, a provider that supports multiple roots
 	 * with a pinned primary, and a plain multi-root session still bound to the
-	 * open workspace file. Excludes workspace-less, worktree-isolated, and
-	 * multi-chat sessions, whose directories are not the workspace's to manage.
+	 * open workspace file. Excludes workspace-less, isolated (worktree or
+	 * clone), and multi-chat sessions, whose directories are not the
+	 * workspace's to manage.
 	 *
 	 * Deliberately not a reconcile trigger: this reads `connection.rootState`,
 	 * but a session registered before provider capabilities hydrate is not
@@ -360,6 +361,7 @@ export class AgentHostSessionWorkingDirectorySynchronizer extends Disposable imp
 			|| compareProtocolVersions(protocolVersion, ACTION_INTRODUCED_IN[ActionType.SessionWorkingDirectorySet]) < 0
 			|| readSessionWorkspaceless(state._meta)
 			|| state.config?.values[SessionConfigKey.Isolation] === 'worktree'
+			|| state.config?.values[SessionConfigKey.Isolation] === 'clone'
 			|| state.chats.length !== 1
 			|| state.defaultChat !== state.chats[0].resource
 			|| !state.workingDirectories?.length) {

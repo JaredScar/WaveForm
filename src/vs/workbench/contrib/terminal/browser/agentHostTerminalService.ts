@@ -99,6 +99,18 @@ export interface IAgentHostTerminalService {
 	 * is provided. Call with `undefined` to clear.
 	 */
 	setDefaultCwd(cwd: URI | undefined): void;
+
+	/**
+	 * The cwd last set by {@link setDefaultCwd}, or `undefined` when none is
+	 * in effect.
+	 *
+	 * Read by the new-terminal action to decide the working directory itself
+	 * instead of asking. A window that already knows which checkout the user
+	 * is looking at — the Agents window, which mounts one folder per visible
+	 * session — would otherwise hit the generic multi-root folder prompt on
+	 * every new terminal.
+	 */
+	readonly defaultCwd: URI | undefined;
 }
 
 export class AgentHostTerminalService extends Disposable implements IAgentHostTerminalService {
@@ -159,6 +171,10 @@ export class AgentHostTerminalService extends Disposable implements IAgentHostTe
 
 	setDefaultCwd(cwd: URI | undefined): void {
 		this._defaultCwd = cwd;
+	}
+
+	get defaultCwd(): URI | undefined {
+		return this._defaultCwd;
 	}
 
 	private _reconcile(): void {

@@ -238,6 +238,29 @@ export interface IAgentHostGitService {
 	/** Removes a worktree, preserving Git's dirty-worktree protection unless `force` is explicitly requested. */
 	removeWorktree(repositoryRoot: URI, worktree: URI, options?: { readonly force?: boolean }): Promise<void>;
 	/**
+	 * Clones the repository into `clone` and checks out `branchName` created
+	 * from `startPoint`.
+	 *
+	 * Unlike a worktree, a clone is an independent repository with its own
+	 * object store, HEAD, and index, which is what allows two WaveForm branch
+	 * folders to check out the *same* branch simultaneously — something git
+	 * refuses to do across worktrees of one repository. The clone is made with
+	 * `--local`, so on a filesystem that supports it git hardlinks the object
+	 * store instead of copying it, keeping the cost close to a worktree's.
+	 *
+	 * `onProgress` is best-effort in exactly the same way as
+	 * {@link addWorktree}: it may fire many times a second or never at all.
+	 */
+	addClone(repositoryRoot: URI, clone: URI, branchName: string, startPoint: string, onProgress?: (progress: IWorktreeFileProgress) => void): Promise<void>;
+	/**
+	 * Deletes a clone directory.
+	 *
+	 * A clone is not registered with the parent repository, so unlike
+	 * {@link removeWorktree} there is no admin entry to prune and no
+	 * de-registration to verify — removal is just a recursive delete.
+	 */
+	removeClone(clone: URI): Promise<void>;
+	/**
 	 * Returns true when the named branch exists in the repository
 	 * (`refs/heads/<branchName>` resolves). Used by archive cleanup to
 	 * confirm the branch is preserved before deleting the worktree, and by

@@ -23,6 +23,8 @@ import './workspaceFolderActions.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { SessionHasGitRepositoryContext, SessionHasGitSyncActionRunningContext, IsNewChatSessionContext, IsPhoneLayoutContext, SessionHasWorkspaceContext } from '../../../common/contextkeys.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
+import { getActiveSessionFolderUri } from '../../../services/sessions/browser/activeSessionFolder.js';
 
 export const SESSIONS_FILES_CONTAINER_ID = 'workbench.sessions.auxiliaryBar.filesContainer';
 
@@ -109,9 +111,10 @@ registerAction2(class extends Action2 {
 		const commandService = accessor.get(ICommandService);
 		const contextKeyService = accessor.get(IContextKeyService);
 		const contextService = accessor.get(IWorkspaceContextService);
+		const sessionsService = accessor.get(ISessionsService);
 
-		const workspaceFolder = contextService.getWorkspace().folders[0];
-		if (!workspaceFolder) {
+		const folderUri = getActiveSessionFolderUri(sessionsService, contextService);
+		if (!folderUri) {
 			return;
 		}
 
@@ -119,7 +122,7 @@ registerAction2(class extends Action2 {
 		isSyncActionRunning.set(true);
 
 		try {
-			await commandService.executeCommand('git.sync', workspaceFolder.uri);
+			await commandService.executeCommand('git.sync', folderUri);
 		} finally {
 			isSyncActionRunning.set(false);
 		}

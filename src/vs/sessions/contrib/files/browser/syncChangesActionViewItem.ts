@@ -15,6 +15,8 @@ import { reset } from '../../../../base/browser/dom.js';
 import { ISCMService } from '../../../../workbench/contrib/scm/common/scm.js';
 import { renderLabelWithIcons } from '../../../../base/browser/ui/iconLabel/iconLabels.js';
 import { MutableDisposable } from '../../../../base/common/lifecycle.js';
+import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
+import { getActiveSessionFolderUri } from '../../../services/sessions/browser/activeSessionFolder.js';
 
 export class SyncChangesActionViewItem extends ActionViewItem {
 	private _tooltip: string | undefined;
@@ -25,6 +27,7 @@ export class SyncChangesActionViewItem extends ActionViewItem {
 		options: IDropdownMenuActionViewItemOptions | undefined,
 		@ISCMService private readonly scmService: ISCMService,
 		@IWorkspaceContextService private readonly contextService: IWorkspaceContextService,
+		@ISessionsService private readonly sessionsService: ISessionsService,
 	) {
 		super(undefined, action, { ...options, icon: false, label: true });
 	}
@@ -42,9 +45,9 @@ export class SyncChangesActionViewItem extends ActionViewItem {
 
 		this.label.classList.add('sync-changes-action-view-item');
 
-		const workspaceFolder = this.contextService.getWorkspace().folders[0];
-		const repository = workspaceFolder
-			? Iterable.find(this.scmService.repositories, repo => isEqual(repo.provider.rootUri, workspaceFolder.uri))
+		const folderUri = getActiveSessionFolderUri(this.sessionsService, this.contextService);
+		const repository = folderUri
+			? Iterable.find(this.scmService.repositories, repo => isEqual(repo.provider.rootUri, folderUri))
 			: undefined;
 
 		const syncActionDetailsObs = derivedOpts<{ title: string; tooltip?: string } | undefined>({ equalsFn: structuralEquals },

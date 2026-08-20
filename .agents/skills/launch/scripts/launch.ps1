@@ -1,4 +1,4 @@
-# Launch Code OSS (VS Code from sources) with an isolated, slimmed copy of a
+﻿# Launch Code OSS (VS Code from sources) with an isolated, slimmed copy of a
 # user-data-dir and unique debugger ports. Prints exactly one JSON line to
 # stdout after the renderer CDP endpoint is ready; all diagnostics use stderr.
 

@@ -16,7 +16,7 @@ import { BranchPicker as SharedBranchPicker } from '../../../chat/browser/branch
 import { SessionIsolationPickerVisibleContext } from '../../../../common/contextkeys.js';
 import { IActiveSession } from '../../../../services/sessions/common/sessionsManagement.js';
 import { ISessionsProvidersService } from '../../../../services/sessions/browser/sessionsProvidersService.js';
-import { CopilotChatSessionsProvider, ICopilotChatSession } from './copilotChatSessionsProvider.js';
+import { CopilotChatSessionsProvider, ICopilotChatSession, IsolationMode, isIsolatedMode } from './copilotChatSessionsProvider.js';
 
 /**
  * Copilot-specific adapter that drives the shared BranchPicker with
@@ -106,17 +106,23 @@ export class BranchPicker extends Disposable {
 		return provider instanceof CopilotChatSessionsProvider ? provider.getSession(session.sessionId) : undefined;
 	}
 
-	private _getIsolationMode(): 'worktree' | 'workspace' {
+	private _getIsolationMode(): IsolationMode {
 		return this._getSession()?.isolationMode.get() ?? 'worktree';
 	}
 
-	private _setModeOnSession(mode: 'worktree' | 'workspace'): void {
+	private _setModeOnSession(mode: IsolationMode): void {
 		this._getSession()?.setIsolationMode(mode);
 	}
 
+	/**
+	 * This checkbox only distinguishes "isolated" from "in the workspace"; the
+	 * choice between a worktree and a clone is made in the session config
+	 * picker. Turning isolation on therefore selects the worktree default,
+	 * while leaving it on preserves whichever isolated mode is already set.
+	 */
 	private _applyIsolationToggle(checked: boolean): void {
 		const before = this._getIsolationMode();
-		const after: 'worktree' | 'workspace' = checked ? 'worktree' : 'workspace';
+		const after: IsolationMode = checked ? (isIsolatedMode(before) ? before : 'worktree') : 'workspace';
 		reportNewChatPickerClosed(this.telemetryService, {
 			id: 'NewChatIsolationPicker',
 			name: 'NewChatIsolationPicker',
@@ -156,7 +162,7 @@ export class BranchPicker extends Disposable {
 			status: isLoading ? 'loading' : branches.length > 0 ? 'ready' : 'empty',
 			canOpen: !isLoading && !isWorkspace && branches.length > 0,
 			isolation: {
-				checked: this._getIsolationMode() === 'worktree',
+				checked: isIsolatedMode(this._getIsolationMode()),
 				state: isolationState,
 				disabledReason: !this._hasGitRepo ? localize('isolationPicker.noGitRepo', "Git repository required for worktree isolation") : undefined,
 			},

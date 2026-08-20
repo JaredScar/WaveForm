@@ -57,6 +57,7 @@ import { TerminalContextKeys } from '../common/terminalContextKey.js';
 import { terminalStrings } from '../common/terminalStrings.js';
 import { Direction, ICreateTerminalOptions, IDetachedTerminalInstance, ITerminalConfigurationService, ITerminalEditorService, ITerminalEditingService, ITerminalGroupService, ITerminalInstance, ITerminalInstanceService, ITerminalService, IXtermTerminal } from './terminal.js';
 import { isAuxiliaryWindow } from '../../../../base/browser/window.js';
+import { IAgentHostTerminalService } from './agentHostTerminalService.js';
 import { InstanceContext } from './terminalContextMenu.js';
 import { getColorClass, getIconId, getUriClasses } from './terminalIcon.js';
 import { killTerminalIcon, newTerminalIcon } from './terminalIcons.js';
@@ -1613,7 +1614,14 @@ export function refreshTerminalActions(detectedProfiles: ITerminalProfile[]): ID
 			}
 
 			const folders = workspaceContextService.getWorkspace().folders;
-			if (folders.length > 1) {
+			// A window that tracks which checkout the user is looking at can
+			// answer the folder question itself. The Agents window mounts one
+			// folder per visible session, so without this every new terminal
+			// there would open a multi-root prompt it already knows the answer to.
+			const defaultCwd = accessor.get(IAgentHostTerminalService).defaultCwd;
+			if (defaultCwd) {
+				cwd = defaultCwd;
+			} else if (folders.length > 1) {
 				// multi-root workspace, create root picker
 				const options: IPickOptions<IQuickPickItem> = {
 					placeHolder: localize('workbench.action.terminal.newWorkspacePlaceholder', "Select current working directory for new terminal")

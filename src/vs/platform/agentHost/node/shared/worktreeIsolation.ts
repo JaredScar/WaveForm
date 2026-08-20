@@ -47,6 +47,12 @@ const WORKTREE_META_BRANCH = 'copilot.worktree.branchName';
 const WORKTREE_META_PATH = 'copilot.worktree.path';
 export const WORKTREE_META_REPOSITORY_ROOT = 'copilot.worktree.repositoryRoot';
 const WORKTREE_META_CREATION_FAILURE = 'copilot.worktree.creationFailure';
+/**
+ * Which isolation kind materialized the checkout. Absent on every session
+ * written before clone isolation existed, which are all worktrees — so a
+ * missing value reads as `worktree` rather than being treated as unknown.
+ */
+const WORKTREE_META_KIND = 'waveform.isolation.kind';
 // TODO@roblourens: Remove after ~November 2026, when pre-July 2026 sessions no longer need their worktree path/root reconstructed from this legacy key.
 const LEGACY_WORKTREE_META_WORKING_DIRECTORY = 'copilot.workingDirectory';
 const MAX_WORKTREE_FAILURE_DIAGNOSTIC_LENGTH = 200;
@@ -65,15 +71,39 @@ export class SessionWorkingDirectoryMissingError extends Error {
 const BRANCH_COMPLETION_LIMIT = 25;
 const WORKTREE_PROGRESS_DEBOUNCE_MS = 40;
 
+/**
+ * How a session's checkout is materialized on disk.
+ *
+ * - `folder` — no isolation; the agent works directly in the requested folder.
+ * - `worktree` — a linked git worktree sharing the parent's object store.
+ * - `clone` — an independent local clone with its own object store and HEAD.
+ *
+ * `worktree` is the cheaper default, but git allows a branch to be checked out
+ * in only one worktree of a repository at a time. `clone` lifts that limit, so
+ * two WaveForm sessions can hold the *same* branch simultaneously — at the cost
+ * of a separate repository whose commits do not exist in the parent until they
+ * are pushed or fetched.
+ */
+export type IsolationKind = 'folder' | 'worktree' | 'clone';
+
+/** The isolation kinds that materialize a separate checkout. */
+export function isIsolatedKind(kind: unknown): kind is 'worktree' | 'clone' {
+	return kind === 'worktree' || kind === 'clone';
+}
+
 interface ISessionWorktree {
 	readonly repositoryRoot: URI;
 	readonly worktree: URI;
+	/** Defaults to `worktree` for entries persisted before clone isolation existed. */
+	readonly kind?: 'worktree' | 'clone';
 }
 
 interface IWorktreeMetadata {
 	readonly branchName: string;
 	readonly worktreePath?: URI;
 	readonly repositoryRoot?: URI;
+	/** Absent for sessions created before clone isolation existed, which are always worktrees. */
+	readonly kind?: 'worktree' | 'clone';
 }
 
 /**
@@ -82,6 +112,23 @@ interface IWorktreeMetadata {
  */
 export function getWorktreesRoot(repositoryRoot: URI): URI {
 	return URI.joinPath(repositoryRoot, '..', `${basename(repositoryRoot.fsPath)}.worktrees`);
+}
+
+/**
+ * The `<repo>.clones` sibling directory where per-session clones are created,
+ * e.g. `/src/vscode` → `/src/vscode.clones`.
+ *
+ * Kept separate from `<repo>.worktrees` so the two isolation kinds never
+ * collide on a directory name, and so tooling that already knows to ignore the
+ * worktrees directory does not silently pick up clones as well.
+ */
+export function getClonesRoot(repositoryRoot: URI): URI {
+	return URI.joinPath(repositoryRoot, '..', `${basename(repositoryRoot.fsPath)}.clones`);
+}
+
+/** The sibling directory a given isolation kind materializes into. */
+export function getIsolationRoot(repositoryRoot: URI, kind: 'worktree' | 'clone'): URI {
+	return kind === 'clone' ? getClonesRoot(repositoryRoot) : getWorktreesRoot(repositoryRoot);
 }
 
 /**
@@ -280,7 +327,7 @@ export interface IResolveIsolationConfigRequest {
  * {@link branchDefault}) into the defaults bag they pass to `validateOrDefault`.
  */
 export interface IIsolationConfigContribution {
-	readonly isolationProperty: ISchemaProperty<'folder' | 'worktree'>;
+	readonly isolationProperty: ISchemaProperty<IsolationKind>;
 	readonly branchProperty: ISchemaProperty<string> | undefined;
 	/**
 	 * Read-only carrier for the client's `git.branchPrefix`. Declared for both
@@ -293,7 +340,7 @@ export interface IIsolationConfigContribution {
 	readonly worktreeIncludeFilesProperty: ISchemaProperty<readonly string[]> | undefined;
 	/** Read-only carrier for the programmatic worktree branch tracking preference. */
 	readonly worktreeBranchTrackProperty: ISchemaProperty<boolean> | undefined;
-	readonly isolationValue: 'folder' | 'worktree';
+	readonly isolationValue: IsolationKind;
 	readonly branchDefault: string | undefined;
 	readonly branchValue: string | undefined;
 }
@@ -450,13 +497,25 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 	async resolveIsolationConfig(request: IResolveIsolationConfigRequest): Promise<IIsolationConfigContribution> {
 		const gitInfo = request.workingDirectory ? await this._getGitInfo(request.workingDirectory) : undefined;
 
-		const isolationProperty = schemaProperty<'folder' | 'worktree'>({
+		const isolationProperty = schemaProperty<IsolationKind>({
 			type: 'string',
 			title: localize('agentHost.sessionConfig.isolation', "Isolation"),
 			description: localize('agentHost.sessionConfig.isolationDescription', "Where the agent should make changes"),
-			enum: gitInfo ? ['folder', 'worktree'] : ['folder'],
-			enumLabels: gitInfo ? [localize('agentHost.sessionConfig.isolation.folder', "Folder"), localize('agentHost.sessionConfig.isolation.worktree', "Worktree")] : [localize('agentHost.sessionConfig.isolation.folder', "Folder")],
-			enumDescriptions: gitInfo ? [localize('agentHost.sessionConfig.isolation.folderDescription', "Work directly in the folder"), localize('agentHost.sessionConfig.isolation.worktreeDescription', "Create a Git worktree for isolation")] : [localize('agentHost.sessionConfig.isolation.folderDescription', "Work directly in the folder")],
+			enum: gitInfo ? ['folder', 'worktree', 'clone'] : ['folder'],
+			enumLabels: gitInfo
+				? [
+					localize('agentHost.sessionConfig.isolation.folder', "Folder"),
+					localize('agentHost.sessionConfig.isolation.worktree', "Worktree"),
+					localize('agentHost.sessionConfig.isolation.clone', "Clone"),
+				]
+				: [localize('agentHost.sessionConfig.isolation.folder', "Folder")],
+			enumDescriptions: gitInfo
+				? [
+					localize('agentHost.sessionConfig.isolation.folderDescription', "Work directly in the folder"),
+					localize('agentHost.sessionConfig.isolation.worktreeDescription', "Create a Git worktree for isolation"),
+					localize('agentHost.sessionConfig.isolation.cloneDescription', "Create a separate local clone, so the same branch can be open more than once"),
+				]
+				: [localize('agentHost.sessionConfig.isolation.folderDescription', "Work directly in the folder")],
 			default: gitInfo ? 'worktree' : 'folder',
 			readOnly: !gitInfo,
 			sessionMutable: false,
@@ -464,9 +523,9 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 
 		// Resolve isolation first — downstream schema shapes (branch's
 		// read-only mode + enum restriction) depend on the effective value.
-		const isolationDefault: 'folder' | 'worktree' = gitInfo ? 'worktree' : 'folder';
+		const isolationDefault: IsolationKind = gitInfo ? 'worktree' : 'folder';
 		const isolationValue = isolationProperty.validate(request.config?.[SessionConfigKey.Isolation])
-			? request.config![SessionConfigKey.Isolation] as 'folder' | 'worktree'
+			? request.config![SessionConfigKey.Isolation] as IsolationKind
 			: isolationDefault;
 
 		let branchProperty: ISchemaProperty<string> | undefined;
@@ -476,9 +535,9 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 		let worktreeIncludeFilesProperty: ISchemaProperty<readonly string[]> | undefined;
 		let worktreeBranchTrackProperty: ISchemaProperty<boolean> | undefined;
 		if (gitInfo) {
-			const branchReadOnly = isolationValue === 'folder';
-			branchDefault = isolationValue === 'worktree' ? gitInfo.defaultBranch.name : gitInfo.currentBranch;
-			branchValue = isolationValue === 'worktree' && typeof request.config?.[SessionConfigKey.Branch] === 'string'
+			const branchReadOnly = !isIsolatedKind(isolationValue);
+			branchDefault = isIsolatedKind(isolationValue) ? gitInfo.defaultBranch.name : gitInfo.currentBranch;
+			branchValue = isIsolatedKind(isolationValue) && typeof request.config?.[SessionConfigKey.Branch] === 'string'
 				? request.config[SessionConfigKey.Branch] as string
 				: branchDefault;
 			branchProperty = schemaProperty<string>({
@@ -570,7 +629,11 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 	 */
 	async resolveWorkingDirectory(request: IResolveWorkingDirectoryRequest): Promise<URI | undefined> {
 		const { config, workingDirectory, sessionId, sessionUri, prompt, githubToken, onProgress } = request;
-		if (config?.[SessionConfigKey.Isolation] !== 'worktree' || !workingDirectory || typeof config[SessionConfigKey.Branch] !== 'string') {
+		if (!config || !workingDirectory || typeof config[SessionConfigKey.Branch] !== 'string') {
+			return workingDirectory;
+		}
+		const isolationKind = config[SessionConfigKey.Isolation];
+		if (!isIsolatedKind(isolationKind)) {
 			return workingDirectory;
 		}
 
@@ -591,7 +654,7 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 		}
 
 		const repositoryRoot = await this._resolvePrimaryWorktreeRoot(checkoutRoot, checkoutRoot);
-		const worktreesRoot = getWorktreesRoot(repositoryRoot);
+		const worktreesRoot = getIsolationRoot(repositoryRoot, isolationKind);
 		// Prefix (e.g. the user's `git.branchPrefix`) the client forwards for
 		// worktree-isolated sessions. Prepended ahead of the built-in `agents/`
 		// prefix when naming the branch and stripped from the worktree dir name.
@@ -625,7 +688,9 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 
 			const worktreeBranchTrack = config[SessionConfigKey.WorktreeBranchTrack] === true;
 			await withPercentProgress(WorktreeCreationPhase.CheckingOut, onProgress, progress =>
-				this._gitService.addWorktree(repositoryRoot, worktree, branchName, baseBranch, worktreeBranchTrack, progress));
+				isolationKind === 'clone'
+					? this._gitService.addClone(repositoryRoot, worktree, branchName, baseBranch, progress)
+					: this._gitService.addWorktree(repositoryRoot, worktree, branchName, baseBranch, worktreeBranchTrack, progress));
 			return { branchName, worktree, baseBranch };
 		});
 		const worktreeIncludeFiles = Array.isArray(config[SessionConfigKey.WorktreeIncludeFiles])
@@ -641,12 +706,12 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 				this._logService.warn(`[${this._logLabel}:${sessionId}] Failed to copy worktree include files: ${errorMessage(error)}`);
 			}
 		}
-		this._materializedWorktrees.set(sessionId, { repositoryRoot, worktree });
+		this._materializedWorktrees.set(sessionId, { repositoryRoot, worktree, kind: isolationKind });
 		// Queue the worktree announcement so the first turn (live) and any
 		// subsequent restore (history) both surface the message in the chat.
 		this._pendingFirstTurnAnnouncements.set(sessionId, buildWorktreeAnnouncementText(branchName));
 		try {
-			await this._writeWorktreeMetadata(sessionUri, { branchName, baseBranch, worktreePath: worktree, repositoryRoot });
+			await this._writeWorktreeMetadata(sessionUri, { branchName, baseBranch, worktreePath: worktree, repositoryRoot, kind: isolationKind });
 		} catch (error) {
 			this._logService.warn(`[${this._logLabel}:${sessionId}] Failed to persist worktree branch metadata: ${errorMessage(error)}`);
 		}
@@ -686,7 +751,11 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 		}
 
 		let recreateFailureReason: string | undefined;
-		if (meta?.worktreePath && meta.repositoryRoot) {
+		if (meta?.kind === 'clone') {
+			// A clone's objects are not mirrored anywhere, so a missing clone
+			// directory is unrecoverable rather than merely un-materialized.
+			recreateFailureReason = localize('cloneMissing', "the clone at '{0}' no longer exists", meta.worktreePath?.fsPath ?? workingDirectory.fsPath);
+		} else if (meta?.worktreePath && meta.repositoryRoot) {
 			const { branchName, worktreePath, repositoryRoot } = meta;
 			const recreated = await this._recreateWorktree(sessionId, { branchName, worktreePath, repositoryRoot });
 			if (recreated.ok) {
@@ -758,7 +827,7 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 			try {
 				const meta = await this._readWorktreeMetadata(sessionUri);
 				return meta?.worktreePath && meta.repositoryRoot
-					? { repositoryRoot: meta.repositoryRoot, worktree: meta.worktreePath }
+					? { repositoryRoot: meta.repositoryRoot, worktree: meta.worktreePath, kind: meta.kind }
 					: undefined;
 			} catch (error) {
 				this._logService.warn(`[${this._logLabel}:${sessionId}] Failed to read worktree metadata before session deletion: ${errorMessage(error)}`);
@@ -778,7 +847,11 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 			return;
 		}
 		try {
-			await this._gitService.removeWorktree(worktree.repositoryRoot, worktree.worktree, { force: true });
+			if (worktree.kind === 'clone') {
+				await this._gitService.removeClone(worktree.worktree);
+			} else {
+				await this._gitService.removeWorktree(worktree.repositoryRoot, worktree.worktree, { force: true });
+			}
 			this._materializedWorktrees.delete(sessionId);
 			this._worktreeDeletionRetries.delete(sessionId);
 		} catch (error) {
@@ -801,6 +874,15 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 	private async _cleanupWorktreeOnArchive(sessionUri: URI, sessionId: string): Promise<void> {
 		const meta = await this._readWorktreeMetadata(sessionUri).catch(() => undefined);
 		if (!meta?.worktreePath || !meta.repositoryRoot) {
+			return;
+		}
+		// Reclaiming a worktree's disk is safe because its branch — and so every
+		// commit on it — lives in the parent repository and survives the
+		// removal. A clone owns the only copy of its objects, so the same
+		// removal would destroy the session's work outright. Clones are
+		// therefore left on disk until the session is explicitly deleted.
+		if (meta.kind === 'clone') {
+			this._logService.trace(`[${this._logLabel}:${sessionId}] Leaving clone '${meta.worktreePath.fsPath}' in place on archive; its commits exist nowhere else`);
 			return;
 		}
 		const { branchName, worktreePath, repositoryRoot } = meta;
@@ -853,6 +935,12 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 	private async _recreateWorktreeOnUnarchive(sessionUri: URI, sessionId: string): Promise<void> {
 		const meta = await this._readWorktreeMetadata(sessionUri).catch(() => undefined);
 		if (!meta?.worktreePath || !meta.repositoryRoot) {
+			return;
+		}
+		// Archive never removes a clone, so there is nothing to restore; and a
+		// clone that is missing anyway cannot be rebuilt, since the parent
+		// repository never held its commits.
+		if (meta.kind === 'clone') {
 			return;
 		}
 		// Skip if the worktree directory already exists — nothing to do.
@@ -1015,13 +1103,14 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 			: selectedBranch;
 	}
 
-	private async _writeWorktreeMetadata(sessionUri: URI, metadata: { branchName: string; baseBranch: string | undefined; worktreePath: URI; repositoryRoot: URI }): Promise<void> {
+	private async _writeWorktreeMetadata(sessionUri: URI, metadata: { branchName: string; baseBranch: string | undefined; worktreePath: URI; repositoryRoot: URI; kind?: 'worktree' | 'clone' }): Promise<void> {
 		const dbRef = this._sessionDataService.openDatabase(sessionUri);
 		try {
 			const work: Promise<void>[] = [
 				dbRef.object.setMetadata(WORKTREE_META_BRANCH, metadata.branchName),
 				dbRef.object.setMetadata(WORKTREE_META_PATH, metadata.worktreePath.toString()),
 				dbRef.object.setMetadata(WORKTREE_META_REPOSITORY_ROOT, metadata.repositoryRoot.toString()),
+				dbRef.object.setMetadata(WORKTREE_META_KIND, metadata.kind ?? 'worktree'),
 			];
 			if (metadata.baseBranch) {
 				work.push(dbRef.object.setMetadata(META_DIFF_BASE_BRANCH, metadata.baseBranch));
@@ -1045,15 +1134,17 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 		}
 
 		try {
-			const [branchName, worktreePathRaw, repositoryRootRaw, legacyWorkingDirectoryRaw] = await Promise.all([
+			const [branchName, worktreePathRaw, repositoryRootRaw, legacyWorkingDirectoryRaw, kindRaw] = await Promise.all([
 				ref.object.getMetadata(WORKTREE_META_BRANCH),
 				ref.object.getMetadata(WORKTREE_META_PATH),
 				ref.object.getMetadata(WORKTREE_META_REPOSITORY_ROOT),
 				ref.object.getMetadata(LEGACY_WORKTREE_META_WORKING_DIRECTORY),
+				ref.object.getMetadata(WORKTREE_META_KIND),
 			]);
 			if (!branchName) {
 				return undefined;
 			}
+			const kind: 'worktree' | 'clone' = kindRaw === 'clone' ? 'clone' : 'worktree';
 			const worktreePath = worktreePathRaw
 				? URI.parse(worktreePathRaw)
 				: legacyWorkingDirectoryRaw
@@ -1064,7 +1155,11 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 				: worktreePath
 					? deriveRepositoryRootFromWorktree(worktreePath)
 					: undefined;
-			if (repositoryRoot) {
+			// A clone is its own repository, so probing it would resolve the
+			// clone itself as the primary root and overwrite the parent we
+			// actually want recorded. Only worktrees, which genuinely link back
+			// to a parent, get normalized here.
+			if (repositoryRoot && kind === 'worktree') {
 				const checkoutRoot = worktreePath && await fileExists(worktreePath.fsPath) ? worktreePath : repositoryRoot;
 				const primaryRoot = await this._resolvePrimaryWorktreeRoot(checkoutRoot, repositoryRoot);
 				if (primaryRoot.toString() !== repositoryRoot.toString()) {
@@ -1076,7 +1171,7 @@ export class WorktreeIsolation extends Disposable implements IAgentHostWorktreeI
 					}
 				}
 			}
-			return { branchName, worktreePath, repositoryRoot };
+			return { branchName, worktreePath, repositoryRoot, kind };
 		} finally {
 			ref.dispose();
 		}
