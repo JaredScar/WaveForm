@@ -480,6 +480,7 @@ import './services/agentHostFilter/browser/agentHostFilterService.js';
 import './contrib/sessions/browser/customizationsToolbar.contribution.js';
 import './contrib/changes/browser/changes.contribution.js';
 import './contrib/changes/browser/conflictDetector.js';
+import './contrib/missionControl/browser/missionControl.contribution.js';
 import './contrib/codeReview/browser/codeReview.contributions.js';
 import './contrib/files/browser/files.contribution.js';
 import './contrib/github/browser/github.contribution.js';

@@ -1,0 +1,184 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.mission-control-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	overflow: hidden;
+}
+
+.mc-list {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 8px 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+/* ── Session card ─────────────────────────────────────────────────── */
+
+.mc-card {
+	border-radius: 6px;
+	padding: 8px 10px;
+	cursor: pointer;
+	border: 1px solid transparent;
+	background: var(--vscode-list-hoverBackground);
+	transition: background 80ms;
+	user-select: none;
+}
+
+.mc-card:hover {
+	background: var(--vscode-list-hoverBackground);
+	border-color: var(--vscode-focusBorder);
+}
+
+.mc-card:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+/* Highlighted: this session is currently visible in the grid */
+.mc-card.mc-in-grid {
+	border-color: var(--vscode-focusBorder);
+	background: var(--vscode-list-activeSelectionBackground);
+}
+
+/* ── Header row ────────────────────────────────────────────────────── */
+
+.mc-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+}
+
+.mc-icon {
+	flex: 0 0 16px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 14px;
+	/* codicon size */
+	height: 16px;
+	width: 16px;
+}
+
+.mc-status-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex: 0 0 8px;
+	background: var(--vscode-descriptionForeground);
+}
+
+.mc-card.mc-status-inprogress .mc-status-dot {
+	background: var(--vscode-progressBar-background);
+	animation: mc-pulse 1.4s ease-in-out infinite;
+}
+
+.mc-card.mc-status-needsinput .mc-status-dot {
+	background: var(--vscode-editorWarning-foreground);
+	animation: mc-pulse 1s ease-in-out infinite;
+}
+
+.mc-card.mc-status-completed .mc-status-dot {
+	background: var(--vscode-testing-iconPassed);
+}
+
+.mc-card.mc-status-error .mc-status-dot {
+	background: var(--vscode-testing-iconFailed);
+}
+
+@keyframes mc-pulse {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.35; }
+}
+
+.mc-title {
+	flex: 1 1 auto;
+	font-weight: 600;
+	font-size: 12px;
+	line-height: 18px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--vscode-foreground);
+}
+
+.mc-branch {
+	flex: 0 1 auto;
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 10px;
+	line-height: 18px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 120px;
+}
+
+/* ── Description row ───────────────────────────────────────────────── */
+
+.mc-desc {
+	margin-top: 2px;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-height: 16px;
+}
+
+/* ── Footer row ────────────────────────────────────────────────────── */
+
+.mc-footer {
+	display: flex;
+	justify-content: space-between;
+	margin-top: 4px;
+	font-size: 10px;
+	line-height: 14px;
+	color: var(--vscode-descriptionForeground);
+}
+
+.mc-diff-add {
+	color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.mc-diff-del {
+	color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.mc-diff {
+	display: flex;
+	gap: 4px;
+}
+
+.mc-time {
+	flex: 0 0 auto;
+	opacity: 0.7;
+}
+
+/* ── Empty state ───────────────────────────────────────────────────── */
+
+.mc-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	gap: 8px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	text-align: center;
+	padding: 24px;
+}
+
+.mc-empty .codicon {
+	font-size: 32px;
+	opacity: 0.4;
+}
