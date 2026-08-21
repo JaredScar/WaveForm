@@ -168,7 +168,7 @@ const searchRoots: { workspace: ISearchRoot[]; user: ISearchRoot[] } = {
 const fixedDiscoveryFiles: { workspace: IFixedDiscoveryFile[]; user: IFixedDiscoveryFile[] } = {
 	workspace: [
 		{ path: ['.github'], filenames: ['copilot-instructions.md'], type: DiscoveredType.AgentInstruction },
-		{ path: [], filenames: ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md'], type: DiscoveredType.AgentInstruction },
+		{ path: [], filenames: ['AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'WAVEFORM.md'], type: DiscoveredType.AgentInstruction },
 		{ path: ['.claude'], filenames: ['CLAUDE.md'], type: DiscoveredType.AgentInstruction },
 		{ path: ['.github', 'copilot'], filenames: ['settings.json', 'settings.local.json'], type: DiscoveredType.Hook },
 		{ path: ['.claude'], filenames: ['settings.json', 'settings.local.json'], type: DiscoveredType.Hook },

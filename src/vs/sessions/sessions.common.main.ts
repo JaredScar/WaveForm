@@ -486,6 +486,7 @@ import './contrib/files/browser/files.contribution.js';
 import './contrib/github/browser/github.contribution.js';
 import './contrib/dispatch/browser/dispatchTasksAction.js';
 import './contrib/budget/browser/sessionBudget.js';
+import './contrib/sharedContext/browser/sharedContext.contribution.js';
 import './contrib/applyCommitsToParentRepo/browser/applyChangesToParentRepo.js';
 import './contrib/fileTreeView/browser/fileTreeView.contribution.js'; // view registration disabled; filesystem provider still needed
 import './contrib/configuration/browser/configuration.contribution.js';
